@@ -819,32 +819,30 @@ IMPORTANT:
 - Estimate kcal and protein based on ingredients — be realistic
 - If kcal/protein info is shown in the image, use those as your base and scale accordingly`;
 
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey.trim()}`
-        },
-        body: JSON.stringify({
-          model: "gpt-4o",
-          max_tokens: 1500,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "image_url", image_url: { url: `data:${imageData.mediaType};base64,${imageData.base64}` } },
-              { type: "text", text: prompt }
-            ]
-          }]
-        })
-      });
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey.trim()}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { inline_data: { mime_type: imageData.mediaType, data: imageData.base64 } },
+                { text: prompt }
+              ]
+            }],
+            generationConfig: { maxOutputTokens: 1500 }
+          })
+        }
+      );
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error?.message || "OpenAI API error");
+        throw new Error(err.error?.message || "Gemini API error");
       }
 
       const data = await res.json();
-      const text = data.choices[0].message.content.trim();
+      const text = data.candidates[0].content.parts[0].text.trim();
       const clean = text.replace(/```json|```/g, "").trim();
       const recipe = JSON.parse(clean);
       setParsed(recipe);
@@ -919,17 +917,17 @@ IMPORTANT:
             <div style={{ color: "#78716c", fontSize: 13, marginBottom: 16 }}>Screenshot a recipe from Instagram, take a photo of a cookbook — anything with a recipe on it.</div>
 
             {/* API Key — hidden when set via env variable */}
-            {!import.meta.env.VITE_OPENAI_KEY && (
+            {!import.meta.env.VITE_GEMINI_KEY && (
               <div style={{ marginBottom: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>OpenAI API Key</div>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>Google Gemini API Key</div>
                 <input
                   type="password"
-                  placeholder="sk-..."
+                  placeholder="AIza..."
                   value={apiKey}
                   onChange={e => setApiKey(e.target.value)}
                   style={{ width: "100%", border: "1.5px solid #e7e5e4", borderRadius: 10, padding: "10px 12px", fontSize: 14, boxSizing: "border-box", fontFamily: "monospace" }}
                 />
-                <div style={{ color: "#a8a29e", fontSize: 11, marginTop: 4 }}>Get yours at platform.openai.com</div>
+                <div style={{ color: "#a8a29e", fontSize: 11, marginTop: 4 }}>Free at aistudio.google.com</div>
               </div>
             )}
 
@@ -1089,7 +1087,7 @@ export default function MealPlanner() {
   const [showImport, setShowImport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [apiKey, setApiKey] = useState(import.meta.env.VITE_OPENAI_KEY || "");
+  const [apiKey, setApiKey] = useState(import.meta.env.VITE_GEMINI_KEY || "");
 
   const shoppingList = useMemo(() => {
     const list = buildShoppingList(plan, catalogue);
