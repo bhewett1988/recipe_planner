@@ -741,10 +741,10 @@ function isStapleItem(itemName, qtys) {
 }
 
 const tagColors = {
-  "High Protein": "#1a6b3c", "Quick": "#b45309", "Omega-3": "#0369a1",
-  "Family Favourite": "#7c3aed", "Weekend Vibes": "#be185d", "Comfort": "#92400e",
-  "Lean": "#065f46", "Bold Flavour": "#991b1b", "Light": "#0e7490",
-  "Plant Power": "#166534", "Imported": "#475569",
+  "High Protein": "#6E7F58", "Quick": "#B0713B", "Omega-3": "#5B7B8C",
+  "Family Favourite": "#8A6BAB", "Weekend Vibes": "#B0713B", "Comfort": "#8A7A4A",
+  "Lean": "#6E7F58", "Bold Flavour": "#A15C42", "Light": "#5B7B8C",
+  "Plant Power": "#6E7F58", "Imported": "#8A7A62",
 };
 
 function shuffleRecipes(catalogue) {
@@ -793,17 +793,23 @@ function ImportModal({ onClose, onImport, apiKey, setApiKey }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(urlInput.trim())}`);
-      if (!res.ok) throw new Error("Couldn't fetch that URL — try a direct image link or use screenshot instead.");
-      const blob = await res.blob();
-      if (!blob.type.startsWith("image/")) throw new Error("URL doesn't point to an image. Try a direct image URL (.jpg, .png).");
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const base64 = ev.target.result.split(",")[1];
-        setImageData({ base64, mediaType: blob.type });
-        setImagePreview(ev.target.result);
-      };
-      reader.readAsDataURL(blob);
+      const res = await fetch('/api/fetch-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: urlInput.trim() })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch URL');
+
+      if (data.type === 'image') {
+        setImageData({ base64: data.base64, mediaType: data.mediaType });
+        setImagePreview(`data:${data.mediaType};base64,${data.base64}`);
+      } else if (data.type === 'html') {
+        // No image — pass the text directly to Claude
+        setImageData({ htmlText: data.text });
+        setImagePreview(null);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -812,14 +818,12 @@ function ImportModal({ onClose, onImport, apiKey, setApiKey }) {
   }
 
   async function runImport() {
-    if (!apiKey.trim()) { setError("Enter your OpenAI API key first."); return; }
-    if (!imageData) { setError("Upload a screenshot first."); return; }
+    if (!apiKey.trim()) { setError("No API key found."); return; }
+    if (!imageData) { setError("Upload a screenshot or fetch a URL first."); return; }
     setLoading(true);
     setError(null);
     try {
-      const prompt = `You are a recipe parser. Look at this recipe image (from Instagram or similar).
-
-Extract the recipe and return ONLY a JSON object with this exact structure — no markdown, no backticks, just raw JSON:
+      const prompt = `You are a recipe parser. Extract the recipe and return ONLY a JSON object with this exact structure — no markdown, no backticks, just raw JSON:
 
 {
   "name": "Recipe Name",
@@ -841,7 +845,15 @@ IMPORTANT:
 - Add ~30% extra for one child portion (smaller portion, milder where needed)
 - forKid is false only for very spicy or adult-specific ingredients
 - Estimate kcal and protein based on ingredients — be realistic
-- If kcal/protein info is shown in the image, use those as your base and scale accordingly`;
+- If kcal/protein info is shown, use those as your base and scale accordingly`;
+
+      // Build message content — image or plain text depending on source
+      const content = imageData.htmlText
+        ? [{ type: "text", text: `${prompt}\n\nRecipe page content:\n\n${imageData.htmlText}` }]
+        : [
+            { type: "image", source: { type: "base64", media_type: imageData.mediaType, data: imageData.base64 } },
+            { type: "text", text: prompt }
+          ];
 
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -854,13 +866,7 @@ IMPORTANT:
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 1500,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "image", source: { type: "base64", media_type: imageData.mediaType, data: imageData.base64 } },
-              { type: "text", text: prompt }
-            ]
-          }]
+          messages: [{ role: "user", content }]
         })
       });
 
@@ -892,94 +898,95 @@ IMPORTANT:
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 300, display: "flex", alignItems: "flex-end" }}
+    <div style={{ position: "fixed", inset: 0, background: "rgba(51,41,30,0.75)", zIndex: 300, display: "flex", alignItems: "flex-end" }}
       onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: "20px 20px 0 0", width: "100%", maxHeight: "90vh", overflowY: "auto", padding: "20px 20px 48px" }}
+      <div style={{
+        fontFamily: "'Karla', sans-serif", background: "#F7F2E9", borderRadius: "6px 6px 0 0", width: "100%", maxHeight: "90vh", overflowY: "auto", padding: "22px 22px 44px",
+        backgroundImage: "radial-gradient(#e9e0d0 0.6px, transparent 0.6px)", backgroundSize: "14px 14px"
+      }}
         onClick={e => e.stopPropagation()}>
-        <div style={{ width: 36, height: 4, background: "#e7e5e4", borderRadius: 2, margin: "0 auto 16px" }} />
+        <div style={{ width: 36, height: 3, background: "#DDD2BE", borderRadius: 2, margin: "0 auto 20px" }} />
 
         {stage === "done" ? (
-          <div style={{ textAlign: "center", padding: "20px 0" }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
-            <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Recipe added!</div>
-            <div style={{ color: "#78716c", fontSize: 14, marginBottom: 20 }}>{parsed?.name} is now in your catalogue.</div>
-            <button onClick={onClose} style={{ background: "#1c1917", color: "#fff", border: "none", borderRadius: 12, padding: "14px 32px", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Done</button>
+          <div style={{ textAlign: "center", padding: "24px 0" }}>
+            <div style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 20, color: "#B0713B", marginBottom: 8 }}>Added to the collection</div>
+            <div style={{ color: "#5A4E3C", fontSize: 14, marginBottom: 24 }}>{parsed?.name}</div>
+            <div onClick={onClose} style={{ display: "inline-block", fontSize: 14, fontWeight: 700, color: "#33291E", borderBottom: "1.5px solid #B0713B", cursor: "pointer" }}>done</div>
           </div>
         ) : stage === "reviewing" && parsed ? (
           <>
-            <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Review imported recipe</div>
-            <div style={{ color: "#78716c", fontSize: 13, marginBottom: 16 }}>Quantities scaled to ~600 kcal / 50g protein per adult + kid portion.</div>
+            <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 19, marginBottom: 4 }}>Review the recipe</div>
+            <div style={{ color: "#8A7A62", fontSize: 13, marginBottom: 18 }}>Quantities scaled to your macro targets, plus a portion for the small person.</div>
 
-            <div style={{ background: "#f4f9ee", borderRadius: 12, padding: 14, marginBottom: 14 }}>
-              <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 2 }}>{parsed.name}</div>
-              <div style={{ color: "#78716c", fontSize: 13, marginBottom: 8 }}>{parsed.desc}</div>
-              <div style={{ display: "flex", gap: 12 }}>
-                <div style={{ color: "#84cc16", fontWeight: 700 }}>{parsed.kcal} kcal</div>
-                <div style={{ color: "#64748b" }}>{parsed.protein}g protein</div>
-                <div style={{ color: "#64748b" }}>⏱ {parsed.time}</div>
+            <div style={{ borderTop: "1px solid #DDD2BE", borderBottom: "1px solid #DDD2BE", padding: "14px 0", marginBottom: 16 }}>
+              <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 18, marginBottom: 4 }}>{parsed.name}</div>
+              <div style={{ color: "#8A7A62", fontSize: 13, marginBottom: 10, fontStyle: "italic", fontFamily: "'Fraunces', serif" }}>{parsed.desc}</div>
+              <div style={{ display: "flex", gap: 16, fontSize: 13 }}>
+                <span style={{ color: "#B0713B", fontWeight: 700 }}>{parsed.kcal} kcal</span>
+                <span style={{ color: "#8A7A62" }}>{parsed.protein}g protein</span>
+                <span style={{ color: "#8A7A62" }}>{parsed.time}</span>
               </div>
             </div>
 
-            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Ingredients</div>
+            <div style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 14, color: "#B0713B", marginBottom: 8 }}>Ingredients</div>
             {parsed.ingredients?.map((ing, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f4f4f2", fontSize: 14 }}>
-                <span>{ing.item}</span><span style={{ fontWeight: 600 }}>{ing.qty}</span>
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #E4DAC7", fontSize: 13.5 }}>
+                <span style={{ color: "#33291E" }}>{ing.item}</span><span style={{ fontWeight: 700, color: "#8A6B4A" }}>{ing.qty}</span>
               </div>
             ))}
 
             {parsed.kidNotes && (
-              <div style={{ background: "#fff8f0", borderRadius: 10, padding: 12, margin: "12px 0", borderLeft: "3px solid #f59e0b" }}>
-                <div style={{ fontWeight: 700, fontSize: 12, color: "#92400e", marginBottom: 3 }}>👦 Kid adaptation</div>
-                <div style={{ fontSize: 13, color: "#78350f" }}>{parsed.kidNotes}</div>
+              <div style={{ padding: "12px 0 12px 14px", margin: "16px 0", borderLeft: "3px solid #B0713B" }}>
+                <div style={{ fontWeight: 700, fontSize: 11.5, letterSpacing: "0.4px", textTransform: "uppercase", color: "#33291E", marginBottom: 3 }}>For the small person</div>
+                <div style={{ fontSize: 13, color: "#5A4E3C" }}>{parsed.kidNotes}</div>
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-              <button onClick={() => setStage("upload")} style={{ flex: 1, background: "#f4f4f2", border: "none", borderRadius: 12, padding: 14, fontWeight: 700, fontSize: 14, cursor: "pointer" }}>← Redo</button>
-              <button onClick={confirmImport} style={{ flex: 2, background: "#84cc16", border: "none", borderRadius: 12, padding: 14, fontWeight: 700, fontSize: 14, cursor: "pointer", color: "#1c1917" }}>Add to catalogue ✓</button>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 22, paddingTop: 16, borderTop: "2.5px solid #33291E" }}>
+              <span onClick={() => setStage("upload")} style={{ fontSize: 13, fontWeight: 700, color: "#8A7A62", cursor: "pointer" }}>← redo</span>
+              <span onClick={confirmImport} style={{ fontSize: 14, fontWeight: 700, color: "#33291E", borderBottom: "1.5px solid #B0713B", cursor: "pointer" }}>add to collection ✓</span>
             </div>
           </>
         ) : (
           <>
-            <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Import a recipe</div>
-            <div style={{ color: "#78716c", fontSize: 13, marginBottom: 16 }}>Upload a screenshot or paste a URL from a recipe site.</div>
+            <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 19, marginBottom: 4 }}>Import a recipe</div>
+            <div style={{ color: "#8A7A62", fontSize: 13, marginBottom: 18 }}>Upload a screenshot, or paste a URL from a recipe site.</div>
 
             {/* API Key — hidden when set via env variable */}
             {!import.meta.env.VITE_CLAUDE_KEY && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>Anthropic API Key</div>
+              <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: "1px solid #DDD2BE" }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>Anthropic API key</div>
                 <input
                   type="password"
                   placeholder="sk-ant-..."
                   value={apiKey}
                   onChange={e => setApiKey(e.target.value)}
-                  style={{ width: "100%", border: "1.5px solid #e7e5e4", borderRadius: 10, padding: "10px 12px", fontSize: 14, boxSizing: "border-box", fontFamily: "monospace" }}
+                  style={{ width: "100%", border: "none", borderBottom: "1.5px solid #DDD2BE", background: "transparent", padding: "6px 0", fontSize: 14, boxSizing: "border-box", fontFamily: "monospace" }}
                 />
-                <div style={{ color: "#a8a29e", fontSize: 11, marginTop: 4 }}>console.anthropic.com</div>
+                <div style={{ color: "#A99879", fontSize: 11, marginTop: 4 }}>console.anthropic.com</div>
               </div>
             )}
 
             {/* Mode tabs */}
-            <div style={{ display: "flex", background: "#f4f4f2", borderRadius: 10, padding: 4, marginBottom: 14 }}>
-              {[["file", "📸 Screenshot"], ["url", "🔗 URL"]].map(([m, label]) => (
-                <button key={m} onClick={() => { setMode(m); setImageData(null); setImagePreview(null); setUrlInput(""); setError(null); }}
-                  style={{ flex: 1, border: "none", borderRadius: 8, padding: "8px 0", fontWeight: 700, fontSize: 13, cursor: "pointer", background: mode === m ? "#fff" : "transparent", color: mode === m ? "#1c1917" : "#a8a29e", boxShadow: mode === m ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s" }}>
+            <div style={{ display: "flex", gap: 20, marginBottom: 16 }}>
+              {[["file", "screenshot"], ["url", "url"]].map(([m, label]) => (
+                <span key={m} onClick={() => { setMode(m); setImageData(null); setImagePreview(null); setUrlInput(""); setError(null); }}
+                  style={{ fontSize: 13.5, fontWeight: 700, cursor: "pointer", paddingBottom: 6, color: mode === m ? "#33291E" : "#A99879", borderBottom: mode === m ? "2.5px solid #B0713B" : "2.5px solid transparent" }}>
                   {label}
-                </button>
+                </span>
               ))}
             </div>
 
             {mode === "file" ? (
               <>
                 <div onClick={() => fileRef.current.click()}
-                  style={{ border: "2px dashed #d6d3d1", borderRadius: 14, padding: "24px 16px", textAlign: "center", cursor: "pointer", background: imagePreview ? "#000" : "#faf9f7", marginBottom: 14, minHeight: 120 }}>
+                  style={{ border: "1.5px dashed #C9BBA1", borderRadius: 4, padding: "26px 16px", textAlign: "center", cursor: "pointer", marginBottom: 16, minHeight: 110 }}>
                   {imagePreview ? (
-                    <img src={imagePreview} alt="preview" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 8, objectFit: "contain" }} />
+                    <img src={imagePreview} alt="preview" style={{ maxWidth: "100%", maxHeight: 190, objectFit: "contain" }} />
                   ) : (
                     <>
-                      <div style={{ fontSize: 32, marginBottom: 8 }}>📸</div>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>Tap to upload screenshot</div>
-                      <div style={{ color: "#a8a29e", fontSize: 12, marginTop: 4 }}>JPG or PNG</div>
+                      <div style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 15, color: "#B0713B", marginBottom: 4 }}>Tap to upload</div>
+                      <div style={{ color: "#A99879", fontSize: 12 }}>a screenshot, JPG or PNG</div>
                     </>
                   )}
                 </div>
@@ -993,36 +1000,43 @@ IMPORTANT:
                     placeholder="https://www.bbcgoodfood.com/recipes/..."
                     value={urlInput}
                     onChange={e => { setUrlInput(e.target.value); setImageData(null); setImagePreview(null); }}
-                    style={{ width: "100%", border: "1.5px solid #e7e5e4", borderRadius: 10, padding: "10px 12px", fontSize: 14, boxSizing: "border-box" }}
+                    style={{ width: "100%", border: "none", borderBottom: "1.5px solid #DDD2BE", background: "transparent", padding: "6px 0", fontSize: 14, boxSizing: "border-box" }}
                   />
-                  <div style={{ color: "#a8a29e", fontSize: 11, marginTop: 4 }}>Works with recipe sites & direct image URLs. Instagram needs a screenshot.</div>
+                  <div style={{ color: "#A99879", fontSize: 11, marginTop: 4 }}>Recipe sites & direct image URLs. Instagram needs a screenshot.</div>
                 </div>
                 {urlInput && !imageData && (
-                  <button onClick={fetchImageFromUrl} disabled={loading}
-                    style={{ width: "100%", background: "#f4f4f2", border: "none", borderRadius: 10, padding: "11px 0", fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 14 }}>
-                    {loading ? "Fetching…" : "Fetch image →"}
-                  </button>
+                  <div onClick={fetchImageFromUrl}
+                    style={{ fontSize: 13.5, fontWeight: 700, color: "#33291E", borderBottom: "1.5px solid #B0713B", display: "inline-block", cursor: "pointer", marginBottom: 16 }}>
+                    {loading ? "fetching…" : "fetch recipe →"}
+                  </div>
+                )}
+                {imageData?.htmlText && (
+                  <div style={{ padding: "10px 0 10px 14px", borderLeft: "3px solid #6E7F58", marginBottom: 16 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: "#33291E" }}>Page fetched</div>
+                    <div style={{ fontSize: 12, color: "#8A7A62" }}>Recipe text extracted — ready to import.</div>
+                  </div>
                 )}
                 {imagePreview && (
-                  <div style={{ marginBottom: 14, borderRadius: 12, overflow: "hidden" }}>
-                    <img src={imagePreview} alt="preview" style={{ width: "100%", maxHeight: 200, objectFit: "cover" }} />
+                  <div style={{ marginBottom: 16 }}>
+                    <img src={imagePreview} alt="preview" style={{ width: "100%", maxHeight: 190, objectFit: "cover" }} />
                   </div>
                 )}
               </>
             )}
 
             {error && (
-              <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 10, padding: 12, marginBottom: 12, fontSize: 13, color: "#dc2626" }}>
-                ⚠️ {error}
+              <div style={{ padding: "10px 0 10px 14px", borderLeft: "3px solid #A15C42", marginBottom: 16, fontSize: 13, color: "#A15C42" }}>
+                {error}
               </div>
             )}
 
-            <button
-              onClick={runImport}
-              disabled={loading || !imageData}
-              style={{ width: "100%", background: loading || !imageData ? "#e7e5e4" : "#1c1917", color: loading || !imageData ? "#a8a29e" : "#fff", border: "none", borderRadius: 12, padding: "14px 0", fontWeight: 700, fontSize: 15, cursor: loading || !imageData ? "not-allowed" : "pointer" }}>
-              {loading ? "Reading recipe…" : "Import & scale recipe →"}
-            </button>
+            <div style={{ paddingTop: 16, borderTop: "2.5px solid #33291E" }}>
+              <span
+                onClick={() => { if (!loading && imageData) runImport(); }}
+                style={{ fontSize: 14, fontWeight: 700, cursor: loading || !imageData ? "default" : "pointer", color: loading || !imageData ? "#A99879" : "#33291E", borderBottom: loading || !imageData ? "1.5px solid transparent" : "1.5px solid #B0713B" }}>
+                {loading ? "reading recipe…" : "import & scale recipe →"}
+              </span>
+            </div>
           </>
         )}
       </div>
@@ -1035,12 +1049,10 @@ function ShoppingItem({ item }) {
   const [checked, setChecked] = useState(false);
   const quantities = [...new Set(item.qty)].join(" + ");
   return (
-    <div onClick={() => setChecked(!checked)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: "1px solid #f4f4f2", cursor: "pointer", opacity: checked ? 0.4 : 1, transition: "opacity 0.2s" }}>
-      <div style={{ width: 20, height: 20, borderRadius: 6, border: checked ? "none" : "2px solid #d6d3d1", background: checked ? "#84cc16" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        {checked && <span style={{ color: "#fff", fontSize: 12, fontWeight: 900 }}>✓</span>}
-      </div>
-      <div style={{ flex: 1, fontSize: 14, fontWeight: checked ? 400 : 500, textDecoration: checked ? "line-through" : "none" }}>{item.item}</div>
-      <div style={{ fontSize: 13, color: "#78716c", fontWeight: 600 }}>{quantities}</div>
+    <div onClick={() => setChecked(!checked)} style={{ display: "flex", alignItems: "baseline", gap: 12, padding: "11px 0", borderBottom: "1px solid #DDD2BE", cursor: "pointer", opacity: checked ? 0.4 : 1 }}>
+      <span style={{ fontFamily: "'Fraunces', serif", fontSize: 15, color: "#B0713B", width: 14, flexShrink: 0 }}>{checked ? "✓" : "·"}</span>
+      <div style={{ flex: 1, fontSize: 14.5, color: "#33291E", textDecoration: checked ? "line-through" : "none" }}>{item.item}</div>
+      <div style={{ fontSize: 13, color: "#8A7A62", fontWeight: 600 }}>{quantities}</div>
     </div>
   );
 }
@@ -1067,76 +1079,72 @@ function SettingsModal({ settings, onSave, onClose }) {
   }
 
   const Field = ({ label, hint, children }) => (
-    <div style={{ marginBottom: 18 }}>
-      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{label}</div>
-      {hint && <div style={{ color: "#a8a29e", fontSize: 12, marginBottom: 6 }}>{hint}</div>}
+    <div style={{ marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid #DDD2BE" }}>
+      <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 15, marginBottom: 2 }}>{label}</div>
+      {hint && <div style={{ color: "#8A7A62", fontSize: 12, marginBottom: 10, lineHeight: 1.4 }}>{hint}</div>}
       {children}
     </div>
   );
 
   const NumInput = ({ value, onChange, min = 1, max = 10 }) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-      <button onClick={() => onChange(Math.max(min, value - 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "1.5px solid #e7e5e4", background: "#fff", fontSize: 18, cursor: "pointer", fontWeight: 700 }}>−</button>
-      <div style={{ fontWeight: 800, fontSize: 20, minWidth: 32, textAlign: "center" }}>{value}</div>
-      <button onClick={() => onChange(Math.min(max, value + 1))} style={{ width: 36, height: 36, borderRadius: 8, border: "1.5px solid #e7e5e4", background: "#fff", fontSize: 18, cursor: "pointer", fontWeight: 700 }}>+</button>
+    <div style={{ display: "flex", alignItems: "baseline", gap: 18 }}>
+      <span onClick={() => onChange(Math.max(min, value - 1))} style={{ fontFamily: "'Fraunces', serif", fontSize: 20, color: "#B0713B", cursor: "pointer" }}>−</span>
+      <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 22, minWidth: 24, textAlign: "center" }}>{value}</span>
+      <span onClick={() => onChange(Math.min(max, value + 1))} style={{ fontFamily: "'Fraunces', serif", fontSize: 20, color: "#B0713B", cursor: "pointer" }}>+</span>
     </div>
   );
 
   const SliderInput = ({ value, onChange, min, max, step = 10, unit }) => (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ color: "#a8a29e", fontSize: 12 }}>{min}{unit}</span>
-        <span style={{ fontWeight: 800, fontSize: 18, color: "#1c1917" }}>{value}{unit}</span>
-        <span style={{ color: "#a8a29e", fontSize: 12 }}>{max}{unit}</span>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+        <span style={{ color: "#A99879", fontSize: 12 }}>{min}{unit}</span>
+        <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 18, color: "#B0713B" }}>{value}{unit}</span>
+        <span style={{ color: "#A99879", fontSize: 12 }}>{max}{unit}</span>
       </div>
       <input type="range" min={min} max={max} step={step} value={value}
         onChange={e => onChange(Number(e.target.value))}
-        style={{ width: "100%", accentColor: "#84cc16", height: 4 }} />
+        style={{ width: "100%", accentColor: "#B0713B", height: 3 }} />
     </div>
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 300, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: "20px 20px 0 0", width: "100%", maxHeight: "88vh", overflowY: "auto", padding: "20px 20px 48px" }} onClick={e => e.stopPropagation()}>
-        <div style={{ width: 36, height: 4, background: "#e7e5e4", borderRadius: 2, margin: "0 auto 20px" }} />
-        <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Settings</div>
-        <div style={{ color: "#78716c", fontSize: 13, marginBottom: 24 }}>Changes apply to the shopping list, import scaling, and header info.</div>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(51,41,30,0.7)", zIndex: 300, display: "flex", alignItems: "flex-end" }} onClick={onClose}>
+      <div style={{
+        fontFamily: "'Karla', sans-serif", background: "#F7F2E9", borderRadius: "6px 6px 0 0", width: "100%", maxHeight: "88vh", overflowY: "auto", padding: "22px 22px 44px",
+        backgroundImage: "radial-gradient(#e9e0d0 0.6px, transparent 0.6px)", backgroundSize: "14px 14px"
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{ width: 36, height: 3, background: "#DDD2BE", borderRadius: 2, margin: "0 auto 20px" }} />
+        <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 20, marginBottom: 4 }}>Settings</div>
+        <div style={{ color: "#8A7A62", fontSize: 13, marginBottom: 22 }}>Applies to the shopping list, import scaling, and week overview.</div>
 
-        <Field label="Calories per adult (dinner)" hint="Target per portion for each adult">
+        <Field label="Calories per adult" hint="Target dinner portion, per adult">
           <SliderInput value={draft.kcalTarget} onChange={v => update("kcalTarget", v)} min={300} max={1000} step={25} unit=" kcal" />
         </Field>
 
-        <Field label="Protein per adult (dinner)" hint="Target per portion for each adult">
+        <Field label="Protein per adult" hint="Target dinner portion, per adult">
           <SliderInput value={draft.proteinTarget} onChange={v => update("proteinTarget", v)} min={20} max={100} step={5} unit="g" />
         </Field>
 
-        <div style={{ height: 1, background: "#f4f4f2", margin: "4px 0 20px" }} />
-
-        <Field label="Adults" hint="Number of adult portions to cook for">
+        <Field label="Adults" hint="Portions to cook for">
           <NumInput value={draft.adults} onChange={v => update("adults", v)} min={1} max={8} />
         </Field>
 
-        <Field label="Children" hint="Number of child portions to cook for">
+        <Field label="Children" hint="Smaller portions to cook for">
           <NumInput value={draft.children} onChange={v => update("children", v)} min={0} max={6} />
         </Field>
 
-        <div style={{ height: 1, background: "#f4f4f2", margin: "4px 0 20px" }} />
-
-        <Field label="Shopping list" hint="Oils, honey, herbs, spices, seeds, condiments and anything in spoons are treated as cupboard staples">
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#faf9f7", borderRadius: 12, padding: "12px 14px" }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>Hide staples</div>
-              <div style={{ color: "#a8a29e", fontSize: 12 }}>Oils, honey, herbs, spices, seeds, sauces…</div>
-            </div>
-            <div onClick={() => update("excludeSpoons", !draft.excludeSpoons)} style={{ width: 44, height: 26, borderRadius: 13, background: draft.excludeSpoons ? "#84cc16" : "#d6d3d1", position: "relative", cursor: "pointer", transition: "background 0.2s", flexShrink: 0 }}>
-              <div style={{ position: "absolute", top: 3, left: draft.excludeSpoons ? 21 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+        <Field label="Shopping list" hint="Oils, honey, herbs, spices, seeds and condiments are treated as cupboard staples">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 14 }}>Hide staples from the list</div>
+            <div onClick={() => update("excludeSpoons", !draft.excludeSpoons)} style={{ width: 40, height: 22, borderRadius: 12, background: draft.excludeSpoons ? "#B0713B" : "#DDD2BE", position: "relative", cursor: "pointer", flexShrink: 0 }}>
+              <div style={{ position: "absolute", top: 3, left: draft.excludeSpoons ? 21 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.15s" }} />
             </div>
           </div>
         </Field>
 
-        <button onClick={save} style={{ width: "100%", marginTop: 8, background: "#1c1917", color: "#fff", border: "none", borderRadius: 12, padding: "14px 0", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>
-          Save settings
-        </button>
+        <div onClick={save} style={{ textAlign: "center", paddingTop: 4, fontSize: 14, fontWeight: 700, color: "#33291E", borderBottom: "1.5px solid #B0713B", display: "inline-block", cursor: "pointer" }}>
+          save settings
+        </div>
       </div>
     </div>
   );
@@ -1202,84 +1210,101 @@ export default function MealPlanner() {
 
   const planRecipes = plan.map(id => catalogue.find(r => r.id === id));
 
+  const currentDayIdx = (new Date().getDay() + 6) % 7; // Mon=0
+
   return (
-    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#faf9f7", minHeight: "100vh", color: "#1c1917" }}>
+    <div style={{
+      fontFamily: "'Karla', -apple-system, sans-serif", background: "#F7F2E9", minHeight: "100vh", color: "#33291E",
+      backgroundImage: "radial-gradient(#e9e0d0 0.6px, transparent 0.6px)", backgroundSize: "14px 14px"
+    }}>
+
       {/* Header */}
-      <div style={{ background: "#1c1917", padding: "20px 24px 0", position: "sticky", top: 0, zIndex: 100 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <div style={{ background: "#84cc16", width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🥗</div>
-          <div>
-            <div style={{ color: "#fff", fontWeight: 700, fontSize: 18, letterSpacing: "-0.3px" }}>Dinner Planner</div>
-            <div style={{ color: "#84cc16", fontSize: 11, fontWeight: 500 }}>
-              {settings.adults} adult{settings.adults !== 1 ? "s" : ""}{settings.children > 0 ? ` · ${settings.children} child${settings.children !== 1 ? "ren" : ""}` : ""} · ~{settings.kcalTarget} kcal · {settings.proteinTarget}g protein
-            </div>
+      <div style={{ padding: "24px 20px 0", position: "sticky", top: 0, zIndex: 100, background: "#F7F2E9" }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", borderBottom: "2.5px solid #33291E", paddingBottom: 10 }}>
+          <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 550, fontSize: 24, letterSpacing: "-0.5px", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 22 }}>🍽️</span> Dinner, planned.
           </div>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <button onClick={() => setShowSettings(true)} style={{ background: "#2c2c28", border: "none", borderRadius: 8, padding: "7px 10px", fontWeight: 700, fontSize: 14, cursor: "pointer", color: "#a8a29e" }}>⚙️</button>
-            <button onClick={() => setShowImport(true)} style={{ background: "#2c2c28", border: "none", borderRadius: 8, padding: "7px 10px", fontWeight: 700, fontSize: 13, cursor: "pointer", color: "#84cc16" }}>📸</button>
-            <button onClick={regeneratePlan} style={{ background: "#84cc16", border: "none", borderRadius: 8, padding: "7px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer", color: "#1c1917" }}>↻</button>
+          <div style={{ display: "flex", gap: 14, alignItems: "baseline" }}>
+            <span onClick={() => setShowSettings(true)} style={{ fontSize: 12, fontWeight: 700, color: "#33291E", borderBottom: "1.5px solid #B0713B", paddingBottom: 1, cursor: "pointer" }}>settings</span>
+            <span onClick={() => setShowImport(true)} style={{ fontSize: 12, fontWeight: 700, color: "#33291E", borderBottom: "1.5px solid #B0713B", paddingBottom: 1, cursor: "pointer" }}>import</span>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0 0", fontSize: 12.5, color: "#8A7A62" }}>
+          <span>
+            {settings.adults} adult{settings.adults !== 1 ? "s" : ""}{settings.children > 0 ? `, ${settings.children} small person${settings.children !== 1 ? "s" : ""}` : ""} · <em style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", color: "#B0713B" }}>~{settings.kcalTarget} kcal, {settings.proteinTarget}g protein</em>
+          </span>
+          <span onClick={regeneratePlan} style={{ fontSize: 12, fontWeight: 700, color: "#33291E", borderBottom: "1.5px solid #B0713B", paddingBottom: 1, cursor: "pointer", whiteSpace: "nowrap" }}>new week</span>
+        </div>
+        <nav style={{ display: "flex", gap: 22, padding: "16px 0 0" }}>
           {["plan", "shopping", "catalogue"].map(v => (
-            <button key={v} onClick={() => setView(v)} style={{ flex: 1, background: "none", border: "none", color: view === v ? "#84cc16" : "#a8a29e", fontWeight: 700, fontSize: 13, padding: "8px 0", cursor: "pointer", borderBottom: view === v ? "2px solid #84cc16" : "2px solid transparent", textTransform: "capitalize", transition: "all 0.15s" }}>
-              {v === "plan" ? "This Week" : v === "shopping" ? "Shopping" : `Recipes (${catalogue.length})`}
-            </button>
+            <div key={v} onClick={() => setView(v)} style={{
+              fontSize: 13.5, fontWeight: 700, cursor: "pointer", paddingBottom: 8,
+              color: view === v ? "#33291E" : "#A99879",
+              borderBottom: view === v ? "2.5px solid #B0713B" : "2.5px solid transparent"
+            }}>
+              {v === "plan" ? "This week" : v === "shopping" ? "Shopping" : `All recipes · ${catalogue.length}`}
+            </div>
           ))}
-        </div>
+        </nav>
       </div>
 
-      <div style={{ padding: "16px 16px 80px" }}>
+      <div style={{ padding: "4px 20px 90px" }}>
         {/* PLAN */}
         {view === "plan" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div>
             {DAYS.map((day, i) => {
               const recipe = planRecipes[i];
               if (!recipe) return null;
+              const isToday = i === currentDayIdx;
               return (
-                <div key={day} style={{ background: "#fff", borderRadius: 14, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.07)" }}>
-                  <div style={{ display: "flex", alignItems: "stretch" }}>
-                    <div style={{ background: "#1c1917", width: 56, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <div style={{ color: "#84cc16", fontWeight: 800, fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>{day.slice(0, 3)}</div>
+                <div key={day} style={isToday ? {
+                  display: "flex", gap: 16, alignItems: "center",
+                  background: "#33291E", color: "#F7F2E9", borderRadius: 3,
+                  padding: "18px 18px 16px", margin: "10px -6px", position: "relative"
+                } : {
+                  display: "flex", gap: 16, alignItems: "center",
+                  padding: "17px 0", borderBottom: "1px solid #DDD2BE"
+                }}>
+                  {isToday && (
+                    <div style={{ position: "absolute", top: -8, right: 14, background: "#B0713B", color: "#F7F2E9", fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", padding: "3px 9px", borderRadius: 2 }}>tonight</div>
+                  )}
+                  <div style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 15, color: isToday ? "#D9A05B" : "#B0713B", width: 38, flexShrink: 0 }}>{day.slice(0, 3)}</div>
+                  <div style={{ flex: 1, cursor: "pointer" }} onClick={() => setActiveRecipe(recipe)}>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase", color: isToday ? "#A3B28C" : (tagColors[recipe.tag] || "#8A7A62"), marginBottom: 4 }}>
+                      {recipe.tag} · {recipe.time}
                     </div>
-                    <div style={{ flex: 1, padding: "12px 14px" }} onClick={() => setActiveRecipe(recipe)}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                        <div style={{ background: tagColors[recipe.tag] || "#64748b", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20 }}>{recipe.tag}</div>
-                        <div style={{ color: "#78716c", fontSize: 11 }}>⏱ {recipe.time}</div>
-                      </div>
-                      <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.3, marginBottom: 3 }}>{recipe.name}</div>
-                      <div style={{ display: "flex", gap: 12 }}>
-                        <div style={{ color: "#84cc16", fontSize: 12, fontWeight: 600 }}>{recipe.kcal} kcal</div>
-                        <div style={{ color: "#64748b", fontSize: 12 }}>{recipe.protein}g protein</div>
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 12px", gap: 6 }}>
-                      <button onClick={() => setActiveRecipe(recipe)} style={{ background: "#f4f4f2", border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontSize: 14 }}>👁</button>
-                      <button onClick={() => swapRecipe(i)} style={{ background: "#f4f4f2", border: "none", borderRadius: 8, padding: "6px 10px", cursor: "pointer", fontSize: 14 }}>🔄</button>
+                    <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 17, lineHeight: 1.25, marginBottom: 5, letterSpacing: "-0.2px" }}>{recipe.name}</div>
+                    <div style={{ fontSize: 12.5, color: isToday ? "#B5A488" : "#8A7A62", display: "flex", gap: 6, alignItems: "center" }}>
+                      <span style={{ color: isToday ? "#D9A05B" : "#B0713B", fontWeight: 700 }}>{recipe.kcal} kcal</span>
+                      <span style={{ color: "#C9BBA1" }}>·</span>
+                      <span>{recipe.protein}g protein</span>
                     </div>
                   </div>
+                  <div onClick={() => swapRecipe(i)} style={{ fontSize: 17, color: isToday ? "#B5A488" : "#C9BBA1", cursor: "pointer", flexShrink: 0 }}>⇄</div>
                 </div>
               );
             })}
+            <div style={{ marginTop: 24, paddingTop: 14, borderTop: "2.5px solid #33291E", fontSize: 12, color: "#8A7A62", display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic" }}>Seven dinners, one list.</span>
+              <span onClick={() => setShowImport(true)} style={{ fontWeight: 700, color: "#33291E", borderBottom: "1.5px solid #B0713B", cursor: "pointer" }}>+ import recipe</span>
+            </div>
           </div>
         )}
 
         {/* SHOPPING */}
         {view === "shopping" && (
-          <div>
-            <div style={{ background: "#fff", borderRadius: 14, padding: 16, marginBottom: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.07)" }}>
-              <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>Shopping List</div>
-              <div style={{ color: "#78716c", fontSize: 13 }}>Based on your 7 planned dinners. Serves {settings.adults} adult{settings.adults !== 1 ? "s" : ""}{settings.children > 0 ? ` + ${settings.children} child${settings.children !== 1 ? "ren" : ""}` : ""}.</div>
+          <div style={{ paddingTop: 14 }}>
+            <div style={{ borderBottom: "1px solid #DDD2BE", paddingBottom: 14, marginBottom: 4 }}>
+              <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 19 }}>This week's list</div>
+              <div style={{ fontSize: 12.5, color: "#8A7A62", marginTop: 2 }}>Serves {settings.adults} adult{settings.adults !== 1 ? "s" : ""}{settings.children > 0 ? ` + ${settings.children} small person${settings.children !== 1 ? "s" : ""}` : ""} · staples left off</div>
             </div>
-            <div style={{ background: "#fff", borderRadius: 14, padding: 16, marginBottom: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.07)" }}>
-              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>🛒 Buy This Week</div>
-              {shoppingList.map((item, i) => <ShoppingItem key={i} item={item} />)}
-            </div>
-            <div style={{ background: "#1c1917", borderRadius: 14, padding: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, color: "#84cc16" }}>🌿 Staples — Check & Top Up</div>
-              <div style={{ color: "#a8a29e", fontSize: 12, marginBottom: 10 }}>Not on the main list — just check you're stocked.</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {STAPLES.map(s => <div key={s} style={{ background: "#2c2c28", color: "#d6d3d1", fontSize: 12, padding: "4px 10px", borderRadius: 20 }}>{s}</div>)}
+            {shoppingList.map((item, i) => <ShoppingItem key={i} item={item} />)}
+
+            <div style={{ marginTop: 26, paddingTop: 16, borderTop: "2.5px solid #33291E" }}>
+              <div style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 14, color: "#B0713B", marginBottom: 3 }}>Worth a check in the cupboard</div>
+              <div style={{ fontSize: 12, color: "#8A7A62", marginBottom: 12 }}>Not on the list above — top up if you're running low.</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", fontSize: 12.5, color: "#5A4E3C" }}>
+                {STAPLES.map((s, i) => <span key={s}>{s}{i < STAPLES.length - 1 ? " ·" : ""}</span>)}
               </div>
             </div>
           </div>
@@ -1287,20 +1312,19 @@ export default function MealPlanner() {
 
         {/* CATALOGUE */}
         {view === "catalogue" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 4 }}>
-              <div style={{ color: "#78716c", fontSize: 13 }}>{catalogue.length} recipes</div>
-              <button onClick={() => setShowImport(true)} style={{ background: "#1c1917", color: "#84cc16", border: "none", borderRadius: 8, padding: "6px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>📸 Import from photo</button>
+          <div style={{ paddingTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderBottom: "1px solid #DDD2BE", paddingBottom: 12, marginBottom: 4 }}>
+              <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 19 }}>The collection</div>
+              <span onClick={() => setShowImport(true)} style={{ fontSize: 12, fontWeight: 700, color: "#33291E", borderBottom: "1.5px solid #B0713B", cursor: "pointer" }}>+ import</span>
             </div>
             {catalogue.map(recipe => (
-              <div key={recipe.id} style={{ background: "#fff", borderRadius: 14, padding: 14, boxShadow: "0 1px 4px rgba(0,0,0,0.07)", cursor: "pointer" }} onClick={() => setActiveRecipe(recipe)}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-                  <div style={{ background: tagColors[recipe.tag] || "#64748b", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 20 }}>{recipe.tag}</div>
-                  <div style={{ color: "#78716c", fontSize: 11 }}>⏱ {recipe.time}</div>
-                  <div style={{ color: "#84cc16", fontSize: 12, fontWeight: 600, marginLeft: "auto" }}>{recipe.kcal} kcal</div>
+              <div key={recipe.id} onClick={() => setActiveRecipe(recipe)} style={{ padding: "16px 0", borderBottom: "1px solid #DDD2BE", cursor: "pointer" }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase", color: tagColors[recipe.tag] || "#8A7A62", marginBottom: 4, display: "flex", justifyContent: "space-between" }}>
+                  <span>{recipe.tag} · {recipe.time}</span>
+                  <span style={{ color: "#B0713B" }}>{recipe.kcal} kcal</span>
                 </div>
-                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 3 }}>{recipe.name}</div>
-                <div style={{ color: "#78716c", fontSize: 13 }}>{recipe.desc}</div>
+                <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 17, marginBottom: 4 }}>{recipe.name}</div>
+                <div style={{ color: "#8A7A62", fontSize: 13, lineHeight: 1.4 }}>{recipe.desc}</div>
               </div>
             ))}
           </div>
@@ -1309,54 +1333,62 @@ export default function MealPlanner() {
 
       {/* RECIPE MODAL */}
       {activeRecipe && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "flex-end" }} onClick={() => setActiveRecipe(null)}>
-          <div style={{ background: "#fff", borderRadius: "20px 20px 0 0", width: "100%", maxHeight: "88vh", overflowY: "auto", padding: "20px 20px 40px" }} onClick={e => e.stopPropagation()}>
-            <div style={{ width: 36, height: 4, background: "#e7e5e4", borderRadius: 2, margin: "0 auto 16px" }} />
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <div style={{ background: tagColors[activeRecipe.tag] || "#64748b", color: "#fff", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20 }}>{activeRecipe.tag}</div>
-              <div style={{ color: "#78716c", fontSize: 12 }}>⏱ {activeRecipe.time}</div>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(51,41,30,0.75)", zIndex: 200, display: "flex", alignItems: "flex-end" }} onClick={() => setActiveRecipe(null)}>
+          <div style={{
+            fontFamily: "'Karla', sans-serif", background: "#F7F2E9", borderRadius: "6px 6px 0 0", width: "100%", maxHeight: "88vh", overflowY: "auto", padding: "22px 22px 40px",
+            backgroundImage: "radial-gradient(#e9e0d0 0.6px, transparent 0.6px)", backgroundSize: "14px 14px"
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ width: 36, height: 3, background: "#DDD2BE", borderRadius: 2, margin: "0 auto 20px" }} />
+
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.8px", textTransform: "uppercase", color: tagColors[activeRecipe.tag] || "#8A7A62", marginBottom: 6 }}>
+              {activeRecipe.tag} · {activeRecipe.time}
             </div>
-            <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>{activeRecipe.name}</div>
-            <div style={{ color: "#78716c", fontSize: 14, marginBottom: 14 }}>{activeRecipe.desc}</div>
-            <div style={{ display: "flex", gap: 12, marginBottom: 18 }}>
-              <div style={{ flex: 1, background: "#f4f9ee", borderRadius: 10, padding: "10px 14px", textAlign: "center" }}>
-                <div style={{ color: "#84cc16", fontWeight: 800, fontSize: 20 }}>{activeRecipe.kcal}</div>
-                <div style={{ color: "#78716c", fontSize: 11 }}>kcal / adult</div>
+            <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 560, fontSize: 24, marginBottom: 6, lineHeight: 1.2, letterSpacing: "-0.3px" }}>{activeRecipe.name}</div>
+            <div style={{ color: "#8A7A62", fontSize: 14, marginBottom: 18, lineHeight: 1.5, fontStyle: "italic", fontFamily: "'Fraunces', serif" }}>{activeRecipe.desc}</div>
+
+            <div style={{ display: "flex", gap: 24, marginBottom: 22, borderTop: "1px solid #DDD2BE", borderBottom: "1px solid #DDD2BE", padding: "12px 0" }}>
+              <div>
+                <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 20, color: "#B0713B" }}>{activeRecipe.kcal}</span>
+                <span style={{ fontSize: 12, color: "#8A7A62" }}> kcal / adult</span>
               </div>
-              <div style={{ flex: 1, background: "#f4f9ee", borderRadius: 10, padding: "10px 14px", textAlign: "center" }}>
-                <div style={{ color: "#1c1917", fontWeight: 800, fontSize: 20 }}>{activeRecipe.protein}g</div>
-                <div style={{ color: "#78716c", fontSize: 11 }}>protein / adult</div>
+              <div>
+                <span style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 20, color: "#33291E" }}>{activeRecipe.protein}g</span>
+                <span style={{ fontSize: 12, color: "#8A7A62" }}> protein / adult</span>
               </div>
             </div>
-            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Ingredients</div>
-            {activeRecipe.ingredients?.map((ing, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #f4f4f2" }}>
-                <div style={{ fontSize: 14 }}>{ing.item}</div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{ing.qty}</div>
-              </div>
-            ))}
-            {activeRecipe.kidNotes && (
-              <div style={{ background: "#fff8f0", borderRadius: 10, padding: 12, margin: "14px 0", borderLeft: "3px solid #f59e0b" }}>
-                <div style={{ fontWeight: 700, fontSize: 12, color: "#92400e", marginBottom: 3 }}>👦 For the kids</div>
-                <div style={{ fontSize: 13, color: "#78350f" }}>{activeRecipe.kidNotes}</div>
-              </div>
-            )}
-            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Method</div>
-            {activeRecipe.method?.map((step, i) => (
-              <div key={i} style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-                <div style={{ background: "#1c1917", color: "#84cc16", width: 24, height: 24, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, flexShrink: 0 }}>{i + 1}</div>
-                <div style={{ fontSize: 14, lineHeight: 1.5, paddingTop: 3 }}>{step}</div>
-              </div>
-            ))}
-            {activeRecipe.staples?.length > 0 && (
-              <div style={{ background: "#f4f4f2", borderRadius: 10, padding: 12, marginTop: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 12, color: "#78716c", marginBottom: 6 }}>🌿 Staples needed</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                  {activeRecipe.staples.map(s => <div key={s} style={{ background: "#fff", border: "1px solid #e7e5e4", fontSize: 11, padding: "3px 9px", borderRadius: 20, color: "#57534e" }}>{s}</div>)}
+
+            <div style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 15, color: "#B0713B", marginBottom: 10 }}>Ingredients</div>
+            <div style={{ marginBottom: 20 }}>
+              {activeRecipe.ingredients?.map((ing, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #E4DAC7", fontSize: 14 }}>
+                  <div style={{ color: "#33291E" }}>{ing.item}</div>
+                  <div style={{ fontWeight: 700, color: "#8A6B4A" }}>{ing.qty}</div>
                 </div>
+              ))}
+            </div>
+
+            {activeRecipe.kidNotes && (
+              <div style={{ padding: "12px 0 12px 14px", margin: "0 0 20px", borderLeft: "3px solid #B0713B" }}>
+                <div style={{ fontWeight: 700, fontSize: 11.5, color: "#33291E", letterSpacing: "0.4px", textTransform: "uppercase", marginBottom: 3 }}>For the small person</div>
+                <div style={{ fontSize: 13.5, color: "#5A4E3C", lineHeight: 1.5 }}>{activeRecipe.kidNotes}</div>
               </div>
             )}
-            <button onClick={() => setActiveRecipe(null)} style={{ width: "100%", marginTop: 20, background: "#1c1917", color: "#fff", border: "none", borderRadius: 12, padding: "14px 0", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Close</button>
+
+            <div style={{ fontFamily: "'Fraunces', serif", fontStyle: "italic", fontSize: 15, color: "#B0713B", marginBottom: 12 }}>Method</div>
+            {activeRecipe.method?.map((step, i) => (
+              <div key={i} style={{ display: "flex", gap: 14, marginBottom: 14 }}>
+                <div style={{ fontFamily: "'Fraunces', serif", fontWeight: 700, fontSize: 15, color: "#B0713B", width: 20, flexShrink: 0 }}>{i + 1}</div>
+                <div style={{ fontSize: 14, lineHeight: 1.6, color: "#33291E" }}>{step}</div>
+              </div>
+            ))}
+
+            {activeRecipe.staples?.length > 0 && (
+              <div style={{ marginTop: 20, paddingTop: 14, borderTop: "1px solid #DDD2BE" }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: "#8A7A62", letterSpacing: "0.4px", textTransform: "uppercase", marginBottom: 6 }}>From the staples cupboard</div>
+                <div style={{ fontSize: 13, color: "#5A4E3C" }}>{activeRecipe.staples.join(" · ")}</div>
+              </div>
+            )}
+            <div onClick={() => setActiveRecipe(null)} style={{ textAlign: "center", marginTop: 26, paddingTop: 16, borderTop: "2.5px solid #33291E", fontSize: 13, fontWeight: 700, color: "#33291E", cursor: "pointer", letterSpacing: "0.3px" }}>close</div>
           </div>
         </div>
       )}
