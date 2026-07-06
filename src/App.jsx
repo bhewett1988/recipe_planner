@@ -768,8 +768,10 @@ function buildShoppingList(selectedIds, catalogue) {
 // ── IMPORT MODAL ──────────────────────────────────────────────────────────────
 function ImportModal({ onClose, onImport, apiKey, setApiKey }) {
   const [stage, setStage] = useState("upload"); // upload | reviewing | done
+  const [mode, setMode] = useState("file"); // file | url
   const [imageData, setImageData] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [urlInput, setUrlInput] = useState("");
   const [parsed, setParsed] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -785,6 +787,28 @@ function ImportModal({ onClose, onImport, apiKey, setApiKey }) {
       setImagePreview(ev.target.result);
     };
     reader.readAsDataURL(file);
+  }
+
+  async function fetchImageFromUrl() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(urlInput.trim())}`);
+      if (!res.ok) throw new Error("Couldn't fetch that URL — try a direct image link or use screenshot instead.");
+      const blob = await res.blob();
+      if (!blob.type.startsWith("image/")) throw new Error("URL doesn't point to an image. Try a direct image URL (.jpg, .png).");
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const base64 = ev.target.result.split(",")[1];
+        setImageData({ base64, mediaType: blob.type });
+        setImagePreview(ev.target.result);
+      };
+      reader.readAsDataURL(blob);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function runImport() {
@@ -917,8 +941,8 @@ IMPORTANT:
           </>
         ) : (
           <>
-            <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Import from screenshot</div>
-            <div style={{ color: "#78716c", fontSize: 13, marginBottom: 16 }}>Screenshot a recipe from Instagram, take a photo of a cookbook — anything with a recipe on it.</div>
+            <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Import a recipe</div>
+            <div style={{ color: "#78716c", fontSize: 13, marginBottom: 16 }}>Upload a screenshot or paste a URL from a recipe site.</div>
 
             {/* API Key — hidden when set via env variable */}
             {!import.meta.env.VITE_CLAUDE_KEY && (
@@ -935,21 +959,57 @@ IMPORTANT:
               </div>
             )}
 
-            {/* Image upload */}
-            <div
-              onClick={() => fileRef.current.click()}
-              style={{ border: "2px dashed #d6d3d1", borderRadius: 14, padding: "24px 16px", textAlign: "center", cursor: "pointer", background: imagePreview ? "#000" : "#faf9f7", marginBottom: 14, position: "relative", overflow: "hidden", minHeight: 120 }}>
-              {imagePreview ? (
-                <img src={imagePreview} alt="preview" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 8, objectFit: "contain" }} />
-              ) : (
-                <>
-                  <div style={{ fontSize: 32, marginBottom: 8 }}>📸</div>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: "#1c1917" }}>Tap to upload screenshot</div>
-                  <div style={{ color: "#a8a29e", fontSize: 12, marginTop: 4 }}>JPG or PNG</div>
-                </>
-              )}
+            {/* Mode tabs */}
+            <div style={{ display: "flex", background: "#f4f4f2", borderRadius: 10, padding: 4, marginBottom: 14 }}>
+              {[["file", "📸 Screenshot"], ["url", "🔗 URL"]].map(([m, label]) => (
+                <button key={m} onClick={() => { setMode(m); setImageData(null); setImagePreview(null); setUrlInput(""); setError(null); }}
+                  style={{ flex: 1, border: "none", borderRadius: 8, padding: "8px 0", fontWeight: 700, fontSize: 13, cursor: "pointer", background: mode === m ? "#fff" : "transparent", color: mode === m ? "#1c1917" : "#a8a29e", boxShadow: mode === m ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s" }}>
+                  {label}
+                </button>
+              ))}
             </div>
-            <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFile} />
+
+            {mode === "file" ? (
+              <>
+                <div onClick={() => fileRef.current.click()}
+                  style={{ border: "2px dashed #d6d3d1", borderRadius: 14, padding: "24px 16px", textAlign: "center", cursor: "pointer", background: imagePreview ? "#000" : "#faf9f7", marginBottom: 14, minHeight: 120 }}>
+                  {imagePreview ? (
+                    <img src={imagePreview} alt="preview" style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 8, objectFit: "contain" }} />
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 32, marginBottom: 8 }}>📸</div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>Tap to upload screenshot</div>
+                      <div style={{ color: "#a8a29e", fontSize: 12, marginTop: 4 }}>JPG or PNG</div>
+                    </>
+                  )}
+                </div>
+                <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFile} />
+              </>
+            ) : (
+              <>
+                <div style={{ marginBottom: 14 }}>
+                  <input
+                    type="url"
+                    placeholder="https://www.bbcgoodfood.com/recipes/..."
+                    value={urlInput}
+                    onChange={e => { setUrlInput(e.target.value); setImageData(null); setImagePreview(null); }}
+                    style={{ width: "100%", border: "1.5px solid #e7e5e4", borderRadius: 10, padding: "10px 12px", fontSize: 14, boxSizing: "border-box" }}
+                  />
+                  <div style={{ color: "#a8a29e", fontSize: 11, marginTop: 4 }}>Works with recipe sites & direct image URLs. Instagram needs a screenshot.</div>
+                </div>
+                {urlInput && !imageData && (
+                  <button onClick={fetchImageFromUrl} disabled={loading}
+                    style={{ width: "100%", background: "#f4f4f2", border: "none", borderRadius: 10, padding: "11px 0", fontWeight: 700, fontSize: 14, cursor: "pointer", marginBottom: 14 }}>
+                    {loading ? "Fetching…" : "Fetch image →"}
+                  </button>
+                )}
+                {imagePreview && (
+                  <div style={{ marginBottom: 14, borderRadius: 12, overflow: "hidden" }}>
+                    <img src={imagePreview} alt="preview" style={{ width: "100%", maxHeight: 200, objectFit: "cover" }} />
+                  </div>
+                )}
+              </>
+            )}
 
             {error && (
               <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 10, padding: 12, marginBottom: 12, fontSize: 13, color: "#dc2626" }}>
@@ -1084,8 +1144,21 @@ function SettingsModal({ settings, onSave, onClose }) {
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 export default function MealPlanner() {
-  const [catalogue, setCatalogue] = useState(INITIAL_RECIPES);
-  const [plan, setPlan] = useState(() => shuffleRecipes(INITIAL_RECIPES));
+  const [catalogue, setCatalogue] = useState(() => {
+    try {
+      const saved = localStorage.getItem("dp_imported");
+      const imported = saved ? JSON.parse(saved) : [];
+      return [...INITIAL_RECIPES, ...imported];
+    } catch { return INITIAL_RECIPES; }
+  });
+
+  const [plan, setPlan] = useState(() => {
+    try {
+      const saved = localStorage.getItem("dp_plan");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return shuffleRecipes(INITIAL_RECIPES);
+  });
   const [activeRecipe, setActiveRecipe] = useState(null);
   const [view, setView] = useState("plan");
   const [showImport, setShowImport] = useState(false);
@@ -1108,14 +1181,23 @@ export default function MealPlanner() {
     const newPlan = [...plan];
     newPlan[dayIndex] = next.id;
     setPlan(newPlan);
+    try { localStorage.setItem("dp_plan", JSON.stringify(newPlan)); } catch {}
   }
 
   function regeneratePlan() {
-    setPlan(shuffleRecipes(catalogue));
+    const newPlan = shuffleRecipes(catalogue);
+    setPlan(newPlan);
+    try { localStorage.setItem("dp_plan", JSON.stringify(newPlan)); } catch {}
   }
 
   function handleImport(recipe) {
-    setCatalogue(prev => [...prev, recipe]);
+    setCatalogue(prev => {
+      const updated = [...prev, recipe];
+      // Only save the imported ones (not INITIAL_RECIPES)
+      const importedOnly = updated.filter(r => r.id > 1000);
+      try { localStorage.setItem("dp_imported", JSON.stringify(importedOnly)); } catch {}
+      return updated;
+    });
   }
 
   const planRecipes = plan.map(id => catalogue.find(r => r.id === id));
